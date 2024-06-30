@@ -12,6 +12,12 @@
 #include <random>
 #include <cmath>
 
+#if defined(__MINGW32__)
+#include <ws2tcpip.h>
+#elif defined(UDP2RAW_LINUX)
+#include <netdb.h>
+#endif
+
 // static int random_number_fd=-1;
 int force_socket_buf = 0;
 
@@ -21,54 +27,53 @@ int address_t::from_str(char *str) {
     char ip_addr_str[100];
     u32_t port;
     mylog(log_info, "parsing address: %s\n", str);
-    int is_ipv6 = 0;
-    if (sscanf(str, "[%[^]]]:%u", ip_addr_str, &port) == 2) {
-        mylog(log_info, "its an ipv6 adress\n");
-        inner.ipv6.sin6_family = AF_INET6;
-        is_ipv6 = 1;
-    } else if (sscanf(str, "%[^:]:%u", ip_addr_str, &port) == 2) {
-        mylog(log_info, "its an ipv4 adress\n");
-        inner.ipv4.sin_family = AF_INET;
-    } else {
+    if (sscanf(str, "%[^:]:%u", ip_addr_str, &port) ==2 )
+    {
+
+    }
+    else
+    {
         mylog(log_error, "failed to parse\n");
         myexit(-1);
     }
+
+    //! resolve DNS
+    struct addrinfo* result = nullptr;
+    struct addrinfo hints;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_family   = AF_UNSPEC;
+
+    auto ret = getaddrinfo(ip_addr_str, nullptr, &hints, &result);
+
+    if ( ret != 0 ) 
+    {
+        mylog(log_error, "ip_addr %s is invalid, %d\n", ip_addr_str, ret);
+        freeaddrinfo(result);
+        myexit(-1);
+    }
+
+    if ( result->ai_family == AF_INET )
+    {
+        inner.ipv4.sin_addr = ((struct sockaddr_in*) (result->ai_addr))->sin_addr;
+        inner.ipv4.sin_family = AF_INET;
+        inner.ipv4.sin_port = htons(port);
+    }
+    else if (  result->ai_family == AF_INET6 )
+    {
+        inner.ipv6.sin6_addr = ((struct sockaddr_in6*) (result->ai_addr))->sin6_addr;
+        inner.ipv6.sin6_family = AF_INET6;
+        inner.ipv6.sin6_port = htons(port);
+    }
+
+    freeaddrinfo(result);
 
     mylog(log_info, "ip_address is {%s}, port is {%u}\n", ip_addr_str, port);
 
     if (port > 65535) {
         mylog(log_error, "invalid port: %d\n", port);
         myexit(-1);
-    }
-
-    int ret = -100;
-    if (is_ipv6) {
-        ret = inet_pton(AF_INET6, ip_addr_str, &(inner.ipv6.sin6_addr));
-        inner.ipv6.sin6_port = htons(port);
-        if (ret == 0)  // 0 if address type doesnt match
-        {
-            mylog(log_error, "ip_addr %s is not an ipv6 address, %d\n", ip_addr_str, ret);
-            myexit(-1);
-        } else if (ret == 1)  // inet_pton returns 1 on success
-        {
-            // okay
-        } else {
-            mylog(log_error, "ip_addr %s is invalid, %d\n", ip_addr_str, ret);
-            myexit(-1);
-        }
-    } else {
-        ret = inet_pton(AF_INET, ip_addr_str, &(inner.ipv4.sin_addr));
-        inner.ipv4.sin_port = htons(port);
-
-        if (ret == 0) {
-            mylog(log_error, "ip_addr %s is not an ipv4 address, %d\n", ip_addr_str, ret);
-            myexit(-1);
-        } else if (ret == 1) {
-            // okay
-        } else {
-            mylog(log_error, "ip_addr %s is invalid, %d\n", ip_addr_str, ret);
-            myexit(-1);
-        }
     }
 
     return 0;
